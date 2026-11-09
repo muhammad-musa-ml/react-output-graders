@@ -1,0 +1,18 @@
+{
+  "name": "react-output-graders",
+  "version": "0.1.0",
+  "description": "Deterministic graders for the React and Tailwind code a UI agent writes, with a runner that scores a model over tasks.",
+  "type": "module",
+  "license": "MIT",
+  "private": true,
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "grade": "node src/cli.mjs"
+  },
+  "dependencies": {
+    "typescript": "5.9.3"
+  }
+}
