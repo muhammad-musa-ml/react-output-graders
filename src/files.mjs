@@ -42,45 +42,60 @@ function pathFromLine(line) {
   return m ? m[1] : null;
 }
 
-// Pulls files out of a model reply: fenced blocks named by the line before the
-// fence, by the info string, or by a first-line comment. Returns the files and
-// the number of fenced blocks that had no usable name.
+const FIRST_LINE_NAME = /^\s*(?:\/\/|\/\*)\s*([A-Za-z0-9_@./-]+\.(?:tsx|ts|jsx|js|css|json))\s*(?:\*\/)?\s*$/;
+
+// Pulls files out of a model reply. A line that is only a path (### App.tsx)
+// starts a file, so one stray or missing fence cannot swallow the next file.
+// A fenced block with no heading is named by its info string or a first-line
+// comment. Returns the files and the number of blocks that had no usable name.
 export function extractFiles(reply) {
   const text = reply.replace(/<think>[\s\S]*?<\/think>/g, "");
   const files = new Map();
   let unnamed = 0;
-  const lines = text.split("\n");
-  let i = 0;
-  let lastLine = "";
-  while (i < lines.length) {
-    const open = lines[i].match(/^\s*```(\S*)\s*(.*)$/);
-    if (!open) {
-      if (lines[i].trim() !== "") lastLine = lines[i];
-      i += 1;
+  let current = null;
+
+  const commit = () => {
+    while (current && current.body.length > 0 && current.body[current.body.length - 1].trim() === "") current.body.pop();
+    if (current && current.body.some((l) => l.trim() !== "")) {
+      let name = current.name;
+      if (!name && current.body.length > 0) {
+        const first = current.body[0].match(FIRST_LINE_NAME);
+        if (first) {
+          name = first[1];
+          current.body.shift();
+        }
+      }
+      if (name) files.set(name, current.body.join("\n") + "\n");
+      else unnamed += 1;
+    }
+    current = null;
+  };
+
+  for (const line of text.split("\n")) {
+    const heading = pathFromLine(line);
+    if (heading) {
+      commit();
+      current = { name: heading, body: [], sawOpen: false };
       continue;
     }
-    const body = [];
-    i += 1;
-    while (i < lines.length && !/^\s*```\s*$/.test(lines[i])) {
-      body.push(lines[i]);
-      i += 1;
+    const fence = line.match(/^\s*```(\S*)\s*(.*)$/);
+    if (!fence) {
+      if (current && (current.sawOpen || line.trim() !== "" || current.body.length > 0)) current.body.push(line);
+      continue;
     }
-    i += 1;
-    let name = pathFromLine(lastLine);
-    if (!name) {
-      const info = `${open[1]} ${open[2]}`.match(PATH_TOKEN);
-      if (info) name = info[1];
+    const info = `${fence[1]} ${fence[2]}`.trim();
+    if (current && current.sawOpen) {
+      commit(); // a closing fence
+    } else if (current && current.body.length > 0 && info === "") {
+      commit(); // a bare fence after fence-less code is a stray closing fence
+    } else if (current) {
+      current.sawOpen = true; // the opening fence of a named heading
+      current.body = []; // anything written between the heading and the fence was prose
+    } else {
+      const named = info.match(PATH_TOKEN);
+      current = { name: named ? named[1] : null, body: [], sawOpen: true };
     }
-    if (!name && body.length > 0) {
-      const first = body[0].match(/^\s*(?:\/\/|\/\*)\s*([A-Za-z0-9_@./-]+\.(?:tsx|ts|jsx|js|css|json))\s*(?:\*\/)?\s*$/);
-      if (first) {
-        name = first[1];
-        body.shift();
-      }
-    }
-    if (name) files.set(name, body.join("\n") + "\n");
-    else unnamed += 1;
-    lastLine = "";
   }
+  commit();
   return { files, unnamed };
 }

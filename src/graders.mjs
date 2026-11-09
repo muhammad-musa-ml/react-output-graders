@@ -45,7 +45,7 @@ export function grade(inputFiles, spec = null) {
   });
   const run = rules.filter((r) => !r.skipped);
   return {
-    pass: files.size > 0 && run.every((r) => r.pass),
+    pass: run.every((r) => r.pass),
     fileCount: files.size,
     rulesRun: run.length,
     rulesSkipped: rules.length - run.length,

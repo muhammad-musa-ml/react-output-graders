@@ -82,6 +82,8 @@ test("runtime-stripped fails fetch, axios, an env read, import.meta.env and a Ne
   const forms = [
     (t) => t.replace("const plan = plans[billing];", "const plan = plans[billing];\n  fetch('/api/plans');"),
     (t) => t.replace("const plan = plans[billing];", "const plan = plans[billing];\n  window.fetch('/api/plans');"),
+    (t) => t.replace("const plan = plans[billing];", "const plan = plans[billing];\n  axios.get('/api/plans');"),
+    (t) => t.replace("const plan = plans[billing];", "const plan = plans[billing];\n  axios('/api/plans');"),
     (t) => t.replace("const plan = plans[billing];", "const plan = plans[billing];\n  const key = process.env.API_KEY;\n  void key;"),
     (t) => t.replace("const plan = plans[billing];", "const plan = plans[billing];\n  const key = import.meta.env.VITE_KEY;\n  void key;"),
     (t) => "'use server';\n" + t,

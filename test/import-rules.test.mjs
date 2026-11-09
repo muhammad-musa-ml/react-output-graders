@@ -15,7 +15,9 @@ test("imports-resolve fails a relative path that is not in the output, and an im
 
 test("imports-resolve fails a path alias and a node: module", () => {
   for (const line of ["import { Button } from '@/components/Button';", "import fs from 'node:fs';"]) {
-    assert.deepEqual(failedIds(variant(CARD, withImport(line))), ["imports-resolve"], line);
+    const files = variant(CARD, withImport(line));
+    assert.deepEqual(failedIds(files), ["imports-resolve"], line);
+    assert.match(findingsFor(files, "imports-resolve")[0].message, /does not resolve in a standalone folder/, line);
   }
 });
 

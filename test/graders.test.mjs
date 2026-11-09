@@ -65,8 +65,40 @@ test("extractFiles reads names from a heading, an info string and a first-line c
   assert.equal(unnamed, 1);
 });
 
+test("extractFiles keeps the file after one whose opening fence the model forgot", () => {
+  // The shape a 4B model wrote: ### index.css with no opening fence and a closing one.
+  const reply = [
+    "### index.tsx",
+    "```tsx",
+    "import './index.css';",
+    "```",
+    "",
+    "### index.css",
+    "@import 'tailwindcss/base';",
+    "body { margin: 0; }",
+    "```",
+    "",
+    "### tailwind.config.js",
+    "```js",
+    "module.exports = { plugins: [] };",
+    "```",
+  ].join("\n");
+  const { files, unnamed } = extractFiles(reply);
+  assert.deepEqual([...files.keys()], ["index.tsx", "index.css", "tailwind.config.js"]);
+  assert.equal(files.get("index.css"), "@import 'tailwindcss/base';\nbody { margin: 0; }\n");
+  assert.equal(files.get("tailwind.config.js"), "module.exports = { plugins: [] };\n");
+  assert.equal(unnamed, 0);
+});
+
+test("extractFiles drops prose between a heading and its fence, and reads a last file with no closing fence", () => {
+  const reply = "### App.tsx\nHere is the entry file:\n```tsx\nexport function App() {}\n```\n### mockData.ts\n```ts\nexport const a = 1;\n";
+  const { files } = extractFiles(reply);
+  assert.equal(files.get("App.tsx"), "export function App() {}\n");
+  assert.equal(files.get("mockData.ts"), "export const a = 1;\n");
+});
+
 test("extractFiles ignores a reasoning block and keeps the last text of a repeated name", () => {
-  const reply = "<think>### Fake.tsx\n```tsx\nx\n```</think>\n### A.tsx\n```tsx\none\n```\n### A.tsx\n```tsx\ntwo\n```\n";
+  const reply = "<think>\n### Fake.tsx\n```tsx\nx\n```\n</think>\n### A.tsx\n```tsx\none\n```\n### A.tsx\n```tsx\ntwo\n```\n";
   const { files } = extractFiles(reply);
   assert.deepEqual([...files.keys()], ["A.tsx"]);
   assert.equal(files.get("A.tsx").trim(), "two");

@@ -1,0 +1,42 @@
+[
+  {
+    "id": "pricing-card",
+    "prompt": "A pricing card with a monthly and yearly toggle, a plan name, the price, three feature lines that each have a check icon, and a buy button.",
+    "spec": { "colors": ["#3e63dd"], "fonts": ["Inter"] }
+  },
+  {
+    "id": "settings-sidebar",
+    "prompt": "A settings sidebar with five links (Profile, Billing, Team, Notifications, Security), an icon for each, a highlighted active link that changes on click, and a footer showing the signed-in user.",
+    "spec": { "colors": ["#0f766e"], "fonts": ["DM Sans"] }
+  },
+  {
+    "id": "login-form",
+    "prompt": "A login form with email and password fields, an error line under each field when its value is invalid, a show-password button, and a submit button that stays disabled until both fields are valid.",
+    "spec": { "colors": ["#7c3aed"], "fonts": ["Manrope"] }
+  },
+  {
+    "id": "invoice-table",
+    "prompt": "A table of eight invoices with columns for number, customer, amount and status, a colored status badge, sorting by amount when its header is clicked, and a total row at the bottom.",
+    "spec": { "colors": ["#b45309"], "fonts": ["Inter"] }
+  },
+  {
+    "id": "chat-panel",
+    "prompt": "A chat panel with a scrolling list of message bubbles from two people, a timestamp on each, and an input that adds a new message when the user presses Enter or clicks a send button.",
+    "spec": { "colors": ["#2563eb"], "fonts": ["Nunito"] }
+  },
+  {
+    "id": "stats-dashboard",
+    "prompt": "A dashboard with a row of four stat cards (revenue, users, orders, churn) each with a small arrow icon showing the trend, and below them a line chart of twelve months of revenue.",
+    "spec": { "colors": ["#047857"], "fonts": ["Inter"] }
+  },
+  {
+    "id": "notification-center",
+    "prompt": "A notification center with three buttons (Success, Warning, Error) that each show a toast message, and a list of the last five messages shown, with a clear button.",
+    "spec": { "colors": ["#be123c"], "fonts": ["Work Sans"] }
+  },
+  {
+    "id": "profile-card",
+    "prompt": "A profile card with a round avatar photo, a name, a job title, a location line with a map pin icon, three stat counts (posts, followers, following) and a follow button that toggles to Following.",
+    "spec": { "colors": ["#9333ea"], "fonts": ["Poppins"] }
+  }
+]
