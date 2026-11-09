@@ -59,12 +59,61 @@ test("css-import-order reads a font url with semicolons, an unquoted url and a p
   }
 });
 
-test("css-import-order treats a stylesheet from a CDN as an other import, not a font import", () => {
+test("css-import-order treats a stylesheet from a CDN as a remote import, not a font import", () => {
   const cdn = "@import url('https://unpkg.com/leaflet@1.9.4/dist/leaflet.css');\n";
   const after = variant(CSS, (t) => t.replace(UTILITIES, UTILITIES + cdn));
   assert.deepEqual(failedIds(after), []);
   const before = variant(CSS, (t) => t.replace(COMPONENTS, cdn + COMPONENTS));
   assert.deepEqual(failedIds(before), ["css-import-order"]);
+});
+
+test("css-import-order lets a remote stylesheet come first, with the fonts, or last, but not between the tailwindcss imports", () => {
+  const remote = "@import url('https://rsms.me/inter/inter.css');\n";
+  const first = variant(CSS, (t) => remote + t);
+  assert.deepEqual(failedIds(first), []);
+  const last = variant(CSS, (t) => t.replace(UTILITIES, UTILITIES + remote));
+  assert.deepEqual(failedIds(last), []);
+  const middle = variant(CSS, (t) => t.replace(COMPONENTS, remote + COMPONENTS));
+  assert.deepEqual(failedIds(middle), ["css-import-order"]);
+  assert.match(findingsFor(middle, "css-import-order")[0].message, /sits between the tailwindcss imports/);
+  const betweenLast = variant(CSS, (t) => t.replace(UTILITIES, remote + UTILITIES));
+  assert.deepEqual(failedIds(betweenLast), ["css-import-order"]);
+});
+
+// One address per alternative of the font-host pattern, each matching only that alternative.
+const FONT_ADDRESSES = [
+  "https://fonts.googleapis.com/x.css",
+  "https://fonts.gstatic.com/x.css",
+  "https://fonts.bunny.net/x.css",
+  "https://use.typekit.net/x.css",
+  "https://kit.fontawesome.com/x.css",
+  "https://cdn.example.com/css?family=Inter",
+  "https://cdn.example.com/inter.woff",
+  "https://cdn.example.com/inter.woff2",
+  "https://cdn.example.com/inter.ttf",
+  "https://cdn.example.com/inter.otf",
+  "https://cdn.example.com/inter.woff2?v=1",
+];
+
+test("css-import-order knows the font hosts and font file addresses: a font import after the tailwindcss imports fails", () => {
+  for (const address of FONT_ADDRESSES) {
+    const late = variant(CSS, (t) => t.replace(UTILITIES, UTILITIES + `@import url('${address}');\n`));
+    assert.deepEqual(failedIds(late), ["css-import-order"], address);
+    assert.match(findingsFor(late, "css-import-order")[0].message, /font import after the tailwindcss imports/, address);
+    const first = variant(CSS, (t) => `@import url('${address}');\n` + t);
+    assert.deepEqual(failedIds(first), [], address);
+  }
+});
+
+test("css-vars-defined defines a variable through setProperty", () => {
+  const files = variant("PricingCard.tsx", (t) => t.replace("text-[var(--accent)]", "text-[var(--brand)]") + "\ndocument.body.style.setProperty('--brand', '#3e63dd');\n");
+  assert.deepEqual(failedIds(files), []);
+});
+
+test("css-vars-defined ignores Tailwind's own --tw- variables and nothing else that starts with tw", () => {
+  assert.deepEqual(failedIds(variant(CSS, (t) => t + "\n.a { transform: translateX(var(--tw-translate-x)); }\n")), []);
+  assert.deepEqual(failedIds(variant(CSS, (t) => t + "\n.a { color: var(--twist); }\n")), ["css-vars-defined"]);
+  assert.deepEqual(failedIds(variant(CSS, (t) => t + "\n.a { color: var(--tw); }\n")), ["css-vars-defined"]);
 });
 
 test("css-vars-defined says nothing when the css itself imports a package stylesheet", () => {
@@ -93,13 +142,26 @@ test("css-vars-defined ignores a var() inside a css comment", () => {
   assert.deepEqual(failedIds(variant(CSS, (t) => t + "\n/* var(--nothing) */\n")), []);
 });
 
+// The font name Inter replaced in the listed files of the known-good set.
+function withoutInter(...paths) {
+  const files = good();
+  for (const path of paths) files.set(path, files.get(path).replaceAll("Inter", "Roboto"));
+  return files;
+}
+
 test("token-coverage fails a color and a font the spec lists but the output lacks", () => {
   const noColor = variant(CSS, (t) => t.replaceAll("#3e63dd", "#111111"));
   noColor.set("tailwind.config.js", good().get("tailwind.config.js").replaceAll("#3e63dd", "#111111"));
   noColor.set("PricingCard.tsx", good().get("PricingCard.tsx"));
   assert.deepEqual(failedIds(noColor), ["token-coverage"]);
-  const noFont = variant(CSS, (t) => t.replaceAll("Inter", "Roboto"));
+  const noFont = withoutInter("index.css", "tailwind.config.js");
   assert.deepEqual(failedIds(noFont), ["token-coverage"]);
+  assert.match(findingsFor(noFont, "token-coverage")[0].message, /in neither index\.css nor tailwind\.config\.js/);
+});
+
+test("token-coverage finds a font in index.css alone or in tailwind.config.js alone", () => {
+  assert.deepEqual(failedIds(withoutInter("index.css")), [], "only the config names Inter");
+  assert.deepEqual(failedIds(withoutInter("tailwind.config.js")), [], "only index.css names Inter");
 });
 
 test("token-coverage matches a color written as short hex, upper case or rgb()", () => {
@@ -114,9 +176,16 @@ test("token-coverage matches a color written as short hex, upper case or rgb()",
 });
 
 test("token-coverage does not find the font Inter inside the word pointer", () => {
-  const files = variant(CSS, (t) => t.replaceAll("Inter", "Roboto") + "\nbutton {\n  cursor: pointer;\n}\n");
+  const files = withoutInter("index.css", "tailwind.config.js");
+  files.set(CSS, files.get(CSS) + "\nbutton {\n  cursor: pointer;\n}\n");
   assert.deepEqual(failedIds(files), ["token-coverage"]);
   assert.match(findingsFor(files, "token-coverage")[0].message, /font Inter/);
+});
+
+test("token-coverage zero-pads a color written as rgb() with small numbers", () => {
+  const files = variant(CSS, (t) => t + "\n.a { color: rgb(1, 2, 3); }\n");
+  assert.deepEqual(failedIds(files, { colors: ["#010203"], fonts: [] }), []);
+  assert.deepEqual(failedIds(files, { colors: ["#010204"], fonts: [] }), ["token-coverage"]);
 });
 
 test("token-coverage reads an 8-digit hex color with alpha", () => {
@@ -125,9 +194,11 @@ test("token-coverage reads an 8-digit hex color with alpha", () => {
   assert.deepEqual(failedIds(files), []);
 });
 
-test("token-coverage finds a font named with a plus sign in a Google Fonts url", () => {
-  const files = variant(CSS, (t) => t.replace("family=Inter", "family=Open+Sans"));
-  assert.deepEqual(failedIds(files, { colors: [], fonts: ["Open Sans"] }), []);
+test("token-coverage finds a font named with a plus sign or %20 in a Google Fonts url", () => {
+  for (const written of ["Open+Sans", "Open%20Sans"]) {
+    const files = variant(CSS, (t) => t.replace("family=Inter", `family=${written}`));
+    assert.deepEqual(failedIds(files, { colors: [], fonts: ["Open Sans"] }), [], written);
+  }
 });
 
 test("a spec rule with no spec, or an empty spec, is skipped and never counted as a pass", () => {

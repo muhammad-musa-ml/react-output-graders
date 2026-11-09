@@ -14,12 +14,13 @@ function cssImports(css) {
   return found;
 }
 
-// A remote import is a font import only when its address says so; a stylesheet
-// from a CDN (leaflet.css) is one of the "other" imports.
+// A remote import is a font import only when its address says so. Any other
+// remote stylesheet (leaflet.css, inter.css on a font site the list does not know)
+// is "remote": it may come first, with the fonts, or last, with the other imports.
 const FONT_URL = /fonts\.(googleapis|gstatic|bunny)|typekit|fontawesome|[?&]family=|[.](woff2?|ttf|otf)([?]|$)/i;
 
 const kindOf = (spec) => {
-  if (/^(https?:)?\/\//i.test(spec)) return FONT_URL.test(spec) ? "font" : "other";
+  if (/^(https?:)?\/\//i.test(spec)) return FONT_URL.test(spec) ? "font" : "remote";
   if (spec === "tailwindcss/base") return "base";
   if (spec === "tailwindcss/components") return "components";
   if (spec === "tailwindcss/utilities") return "utilities";
@@ -49,6 +50,9 @@ const cssImportOrder = {
     for (const i of imports) {
       if (i.kind === "font" && b && i.index > b.index) add(i.line, "font import after the tailwindcss imports");
       if (i.kind === "other" && u && i.index < u.index) add(i.line, `@import "${i.spec}" before the tailwindcss imports finish`);
+      if (i.kind === "remote" && b && u && i.index > b.index && i.index < u.index) {
+        add(i.line, `@import "${i.spec}" sits between the tailwindcss imports; a remote stylesheet goes before them or after them`);
+      }
     }
     return findings;
   },
@@ -68,7 +72,8 @@ function importsPackageCss(files) {
   return false;
 }
 
-// "never leave a bare var(--...) undefined". A var() with a fallback is fine.
+// "never leave a bare var(--...) undefined". A var() with a fallback is fine, and
+// so is one of Tailwind's own --tw- variables, which its generated css defines.
 // When the output imports a package's stylesheet, that sheet may define the
 // variable, so the rule says nothing rather than guess.
 const cssVarsDefined = {
@@ -83,7 +88,7 @@ const cssVarsDefined = {
       for (const m of body.matchAll(VAR_DEF)) defined.add(m[1] ?? m[2]);
       for (const m of body.matchAll(VAR_USE)) if (m[2] === ")") uses.push({ file: path, line: lineAt(body, m.index), name: m[1] });
     }
-    return uses.filter((u) => !defined.has(u.name)).map((u) => ({ file: u.file, line: u.line, message: `var(${u.name}) is used and never defined` }));
+    return uses.filter((u) => !defined.has(u.name) && !u.name.startsWith("--tw-")).map((u) => ({ file: u.file, line: u.line, message: `var(${u.name}) is used and never defined` }));
   },
 };
 
@@ -114,12 +119,14 @@ const tokenCoverage = {
     for (const want of spec.colors ?? []) {
       if (!present.has(hexOf(want))) findings.push({ file: "(output)", line: 0, message: `color ${want} from the spec is in no file` });
     }
-    const css = (files.get("index.css") ?? "").toLowerCase().replace(/\+/g, " ");
+    // The skill puts a font in index.css (the import or font-family) or in
+    // tailwind.config.js (fontFamily), so either file counts.
+    const css = ((files.get("index.css") ?? "") + "\n" + (files.get("tailwind.config.js") ?? "")).toLowerCase().replace(/\+|%20/g, " ");
     for (const font of spec.fonts ?? []) {
       const escaped = font.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
       // The name has to stand alone: "Inter" must not be found inside "pointer".
       if (!new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`).test(css)) {
-        findings.push({ file: "index.css", line: 0, message: `font ${font} from the spec is not in index.css` });
+        findings.push({ file: "(output)", line: 0, message: `font ${font} from the spec is in neither index.css nor tailwind.config.js` });
       }
     }
     return findings;

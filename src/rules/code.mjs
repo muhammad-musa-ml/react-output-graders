@@ -5,14 +5,6 @@ const tsFiles = (files) => [...files.keys()].filter(isTypeScript);
 
 const hasModifier = (node, kind) => (ts.canHaveModifiers(node) ? (ts.getModifiers(node) ?? []).some((m) => m.kind === kind) : false);
 
-function containsJsx(node) {
-  let found = false;
-  walk(node, (n) => {
-    if (ts.isJsxElement(n) || ts.isJsxSelfClosingElement(n) || ts.isJsxFragment(n)) found = true;
-  });
-  return found;
-}
-
 // "Named exports only - never export default a React component."
 const namedExports = {
   id: "named-exports",
@@ -52,7 +44,7 @@ const noAny = {
   },
 };
 
-const isPascal = (name) => /^[A-Z][A-Za-z0-9]*$/.test(name);
+const isPascal = (name) => /^[A-Z][\w$]*$/.test(name);
 
 const unwrap = (node) => {
   let n = node;
@@ -60,28 +52,103 @@ const unwrap = (node) => {
   return n;
 };
 
-// memo(() => ...) and forwardRef(...) wrap a component; useMemo(() => <div />) does not.
-function isComponentWrapper(init) {
-  if (!ts.isCallExpression(init)) return false;
-  const callee = init.expression;
-  const name = ts.isIdentifier(callee) ? callee.text : ts.isPropertyAccessExpression(callee) ? callee.name.text : "";
-  return (name === "memo" || name === "forwardRef") && init.arguments.some((a) => ts.isArrowFunction(a) || ts.isFunctionExpression(a));
+const isJsx = (n) => ts.isJsxElement(n) || ts.isJsxSelfClosingElement(n) || ts.isJsxFragment(n);
+
+const containsJsx = (node) => {
+  let found = false;
+  walk(node, (n) => {
+    if (isJsx(n)) found = true;
+  });
+  return found;
+};
+
+// Is this expression JSX, or a conditional with a JSX branch, or a && / || / ?? with JSX on the right?
+function jsxValue(expr) {
+  const e = unwrap(expr);
+  if (isJsx(e)) return true;
+  if (ts.isConditionalExpression(e)) return jsxValue(e.whenTrue) || jsxValue(e.whenFalse);
+  if (ts.isBinaryExpression(e)) {
+    const op = e.operatorToken.kind;
+    const logical = op === ts.SyntaxKind.AmpersandAmpersandToken || op === ts.SyntaxKind.BarBarToken || op === ts.SyntaxKind.QuestionQuestionToken;
+    return logical && jsxValue(e.right);
+  }
+  return false;
 }
 
-// A component is a capitalised function, arrow, class or memo/forwardRef wrapper that returns JSX,
-// declared anywhere in the file: one nested in another component counts too.
+// The return expressions and the local variables of this function itself, not of a
+// function nested in it.
+function ownParts(body) {
+  const returns = [];
+  const locals = new Map();
+  const visit = (n) => {
+    if (ts.isFunctionLike(n)) return;
+    if (ts.isReturnStatement(n) && n.expression) returns.push(n.expression);
+    if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && n.initializer) locals.set(n.name.text, n.initializer);
+    ts.forEachChild(n, visit);
+  };
+  ts.forEachChild(body, visit);
+  return { returns, locals };
+}
+
+// "Returns JSX": an arrow's expression body or one of the function's own return
+// statements has JSX in it (so return items.map((i) => <li />) and
+// return createPortal(<div />, body) count), or returns a local variable that was set to
+// JSX. JSX that the function builds and hands to something else without returning it does not.
+function returnsJsx(fn) {
+  if (!fn.body) return false;
+  if (!ts.isBlock(fn.body)) return containsJsx(fn.body);
+  const { returns, locals } = ownParts(fn.body);
+  return returns.some((e) => {
+    if (containsJsx(e)) return true;
+    const returned = unwrap(e);
+    return ts.isIdentifier(returned) && locals.has(returned.text) && jsxValue(locals.get(returned.text));
+  });
+}
+
+const isFunctionValue = (n) => ts.isArrowFunction(n) || ts.isFunctionExpression(n);
+
+// memo(() => ...) and forwardRef(...) wrap a component, possibly one inside the other;
+// useMemo(() => <div />) does not. Returns the wrapped function, or null.
+function wrappedFunction(init) {
+  if (!ts.isCallExpression(init)) return null;
+  const callee = init.expression;
+  const name = ts.isIdentifier(callee) ? callee.text : ts.isPropertyAccessExpression(callee) ? callee.name.text : "";
+  if (name !== "memo" && name !== "forwardRef") return null;
+  for (const arg of init.arguments) {
+    const a = unwrap(arg);
+    if (isFunctionValue(a)) return a;
+    const inner = wrappedFunction(a);
+    if (inner) return inner;
+  }
+  return null;
+}
+
+// A class is a component when its render method, or an arrow assigned to render, returns JSX.
+function rendersJsx(cls) {
+  return cls.members.some((m) => {
+    if (!(m.name && ts.isIdentifier(m.name) && m.name.text === "render")) return false;
+    if (ts.isMethodDeclaration(m)) return returnsJsx(m);
+    return ts.isPropertyDeclaration(m) && m.initializer !== undefined && isFunctionValue(unwrap(m.initializer)) && returnsJsx(unwrap(m.initializer));
+  });
+}
+
+// A component is a capitalised function, arrow, class or memo/forwardRef wrapper that returns
+// JSX (a class: from render), declared anywhere in the file: one nested in another component
+// counts too, and so does an unnamed default export. A function that only passes JSX to
+// another function, such as toast.custom(<span />) as a statement, is not a component.
 function findComponents(sf) {
   const found = [];
   walk(sf, (n) => {
-    if (ts.isFunctionDeclaration(n) && n.name && isPascal(n.name.text) && n.body && containsJsx(n.body)) {
+    if (ts.isFunctionDeclaration(n) && n.name && isPascal(n.name.text) && returnsJsx(n)) {
       found.push({ name: n.name.text, node: n });
-    } else if (ts.isClassDeclaration(n) && n.name && isPascal(n.name.text) && containsJsx(n)) {
+    } else if (ts.isFunctionDeclaration(n) && !n.name && hasModifier(n, ts.SyntaxKind.DefaultKeyword) && returnsJsx(n)) {
+      found.push({ name: "(default export)", node: n });
+    } else if (ts.isClassDeclaration(n) && n.name && isPascal(n.name.text) && rendersJsx(n)) {
       found.push({ name: n.name.text, node: n });
     } else if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && isPascal(n.name.text) && n.initializer) {
       const init = unwrap(n.initializer);
-      if ((ts.isArrowFunction(init) || ts.isFunctionExpression(init) || isComponentWrapper(init)) && containsJsx(init)) {
-        found.push({ name: n.name.text, node: n });
-      }
+      const fn = isFunctionValue(init) ? init : wrappedFunction(init);
+      if ((fn && returnsJsx(fn)) || (ts.isClassExpression(init) && rendersJsx(init))) found.push({ name: n.name.text, node: n });
     }
   });
   return found;
@@ -129,44 +196,61 @@ function bindingNames(name, out) {
   else for (const el of name.elements) if (ts.isBindingElement(el)) bindingNames(el.name, out);
 }
 
-function moduleBindings(sf) {
+// Every name the file declares anywhere: imports, functions, classes, variables
+// (including destructured ones), parameters. A name in this set is bound somewhere;
+// the rule does not work out scopes.
+function declaredNames(sf) {
   const names = new Set();
-  for (const stmt of sf.statements) {
-    if (ts.isImportDeclaration(stmt) && stmt.importClause) {
-      const clause = stmt.importClause;
-      if (clause.name) names.add(clause.name.text);
-      const bindings = clause.namedBindings;
-      if (bindings && ts.isNamespaceImport(bindings)) names.add(bindings.name.text);
-      if (bindings && ts.isNamedImports(bindings)) for (const el of bindings.elements) names.add(el.name.text);
-    } else if ((ts.isFunctionDeclaration(stmt) || ts.isClassDeclaration(stmt)) && stmt.name) {
-      names.add(stmt.name.text);
-    } else if (ts.isVariableStatement(stmt)) {
-      for (const d of stmt.declarationList.declarations) bindingNames(d.name, names);
-    }
-  }
+  const add = (id) => {
+    if (id && ts.isIdentifier(id)) names.add(id.text);
+  };
+  walk(sf, (n) => {
+    if (ts.isImportClause(n) || ts.isNamespaceImport(n) || ts.isImportSpecifier(n) || ts.isImportEqualsDeclaration(n)) add(n.name);
+    else if (ts.isFunctionDeclaration(n) || ts.isFunctionExpression(n) || ts.isClassDeclaration(n) || ts.isClassExpression(n) || ts.isEnumDeclaration(n) || ts.isModuleDeclaration(n)) add(n.name);
+    else if (ts.isVariableDeclaration(n) || ts.isParameter(n)) bindingNames(n.name, names);
+  });
   return names;
 }
 
-// The failure class where a model uses a hook or React.something and forgets the import.
+// The leftmost identifier of a JSX tag name: Foo for <Foo />, <Foo.Bar />, <motion.div />.
+function tagRoot(tagName) {
+  let t = tagName;
+  while (ts.isPropertyAccessExpression(t)) t = t.expression;
+  return ts.isIdentifier(t) ? t : null;
+}
+
+// The failure class where a model uses a hook, React.something, ReactDOM.something or a
+// component and forgets the import. As in TypeScript, a tag that starts with a lower-case
+// letter or contains a hyphen (<div />, <my-element />) is an HTML element; any other tag, and
+// the root of a dotted one, has to be bound.
 const reactInScope = {
   id: "react-in-scope",
   check(files) {
     const findings = [];
     for (const path of uiFiles(files)) {
       const sf = parseFile(files, path);
-      const bound = moduleBindings(sf);
+      const bound = declaredNames(sf);
       const reported = new Set();
+      const report = (name, node, message) => {
+        if (reported.has(name)) return;
+        reported.add(name);
+        findings.push({ file: path, line: lineOf(sf, node), message });
+      };
       walk(sf, (n) => {
         if (ts.isCallExpression(n) && ts.isIdentifier(n.expression) && HOOKS.has(n.expression.text) && !bound.has(n.expression.text)) {
-          if (!reported.has(n.expression.text)) {
-            reported.add(n.expression.text);
-            findings.push({ file: path, line: lineOf(sf, n), message: `${n.expression.text} is called but not imported` });
-          }
+          report(n.expression.text, n, `${n.expression.text} is called but not imported`);
         }
         if (ts.isPropertyAccessExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === "React" && !bound.has("React")) {
-          if (!reported.has("React")) {
-            reported.add("React");
-            findings.push({ file: path, line: lineOf(sf, n), message: "React.* is used but React is not imported" });
+          report("React", n, "React.* is used but React is not imported");
+        }
+        if (ts.isPropertyAccessExpression(n) && ts.isIdentifier(n.expression) && n.expression.text === "ReactDOM" && !bound.has("ReactDOM")) {
+          report("ReactDOM", n, "ReactDOM.* is used but ReactDOM is not imported");
+        }
+        if (ts.isJsxOpeningElement(n) || ts.isJsxSelfClosingElement(n)) {
+          const root = tagRoot(n.tagName);
+          const needsBinding = root && (ts.isPropertyAccessExpression(n.tagName) || !/^[a-z]|-/.test(root.text));
+          if (needsBinding && !bound.has(root.text)) {
+            report(root.text, n, `<${n.tagName.getText(sf)}> is used but ${root.text} is neither imported nor declared`);
           }
         }
       });

@@ -48,9 +48,62 @@ function declaredPackages(files) {
   return declared;
 }
 
-function resolvesRelative(files, fromPath, spec) {
+// The path of the file a relative import points at, or null when the output has none.
+// A specifier may name the compiled file (./App.js) for a TypeScript source (App.tsx), which
+// TypeScript and Vite accept, so the extension is also tried as .ts and .tsx.
+function resolveRelative(files, fromPath, spec) {
   const base = posix.normalize(posix.join(posix.dirname(fromPath), spec));
-  return EXTENSIONS.some((ext) => files.has(base + ext)) || EXTENSIONS.some((ext) => files.has(posix.join(base, "index" + ext)));
+  const stem = base.replace(/\.jsx?$/, "");
+  const candidates = [
+    ...EXTENSIONS.map((ext) => base + ext),
+    ...(stem === base ? [] : [stem + ".ts", stem + ".tsx"]),
+    ...EXTENSIONS.map((ext) => posix.join(base, "index" + ext)),
+  ];
+  return candidates.find((c) => files.has(c)) ?? null;
+}
+
+const hasExportModifier = (node) => (ts.canHaveModifiers(node) ? (ts.getModifiers(node) ?? []).some((m) => m.kind === ts.SyntaxKind.ExportKeyword) : false);
+const hasDefaultModifier = (node) => (ts.canHaveModifiers(node) ? (ts.getModifiers(node) ?? []).some((m) => m.kind === ts.SyntaxKind.DefaultKeyword) : false);
+
+function declaredNames(name, out) {
+  if (ts.isIdentifier(name)) out.add(name.text);
+  else for (const el of name.elements) if (ts.isBindingElement(el)) declaredNames(el.name, out);
+}
+
+// A file with no ES export that writes to module.exports or exports is CommonJS.
+const COMMONJS = /\bmodule\.exports\b|\bexports\s*[.[]|Object\.defineProperty\(\s*exports/;
+
+// What a module exports: its names, whether it has a default, and whether the
+// list is open (export * from, export =, CommonJS), in which case nothing is
+// reported against it. Types and interfaces count as exports.
+function exportsOf(sf) {
+  const names = new Set();
+  let hasDefault = false;
+  let open = false;
+  let sawExport = false;
+  const addName = (name) => {
+    if (name === "default") hasDefault = true;
+    else names.add(name);
+  };
+  for (const stmt of sf.statements) {
+    if (ts.isExportAssignment(stmt)) {
+      sawExport = true;
+      if (stmt.isExportEquals) open = true;
+      else hasDefault = true;
+    } else if (ts.isExportDeclaration(stmt)) {
+      sawExport = true;
+      if (!stmt.exportClause) open = true;
+      else if (ts.isNamespaceExport(stmt.exportClause)) addName(stmt.exportClause.name.text);
+      else for (const el of stmt.exportClause.elements) addName(el.name.text);
+    } else if (hasExportModifier(stmt)) {
+      sawExport = true;
+      if (hasDefaultModifier(stmt)) hasDefault = true;
+      else if (ts.isVariableStatement(stmt)) for (const d of stmt.declarationList.declarations) declaredNames(d.name, names);
+      else if (stmt.name && ts.isIdentifier(stmt.name)) names.add(stmt.name.text);
+    }
+  }
+  if (!sawExport && COMMONJS.test(sf.text)) open = true;
+  return { names, hasDefault, open };
 }
 
 // Every module specifier a file asks for: import and export-from, import(), require().
@@ -59,6 +112,9 @@ function specifiers(sf) {
   walk(sf, (n) => {
     if ((ts.isImportDeclaration(n) || ts.isExportDeclaration(n)) && n.moduleSpecifier && ts.isStringLiteral(n.moduleSpecifier)) {
       found.push({ spec: n.moduleSpecifier.text, node: n });
+    }
+    if (ts.isImportEqualsDeclaration(n) && ts.isExternalModuleReference(n.moduleReference) && ts.isStringLiteral(n.moduleReference.expression)) {
+      found.push({ spec: n.moduleReference.expression.text, node: n });
     }
     if (ts.isCallExpression(n) && n.arguments.length >= 1 && ts.isStringLiteralLike(n.arguments[0])) {
       const callee = n.expression;
@@ -70,20 +126,50 @@ function specifiers(sf) {
   return found;
 }
 
+// A relative import of a code file has to name something the file exports:
+// a default import needs a default export, a named import needs that name.
+function bindingFindings(importNode, spec, target) {
+  const clause = importNode.importClause; // only an import declaration has one
+  const out = [];
+  if (!clause) return out;
+  if (clause.name && !target.hasDefault) {
+    out.push({ node: clause, message: `"${spec}" has no default export, but ${clause.name.text} is imported as its default` });
+  }
+  if (clause.namedBindings && ts.isNamedImports(clause.namedBindings)) {
+    for (const el of clause.namedBindings.elements) {
+      const name = (el.propertyName ?? el.name).text;
+      const missing = name === "default" ? !target.hasDefault : !target.names.has(name);
+      if (missing) out.push({ node: el, message: `"${spec}" does not export ${name}` });
+    }
+  }
+  return out;
+}
+
 // "The code must compile - no unresolved imports": relative paths must exist
-// in the output, packages must be named by the contract or by a package.json.
+// in the output and export what is imported from them; packages must be named
+// by the contract or by a package.json.
 const importsResolve = {
   id: "imports-resolve",
   check(files) {
     const findings = [];
     const declared = declaredPackages(files);
+    const exportsCache = new Map();
     for (const path of files.keys()) {
       if (!isCode(path) || path === "tailwind.config.js") continue;
       const sf = parseFile(files, path);
       for (const { spec, node } of specifiers(sf)) {
         const add = (message) => findings.push({ file: path, line: lineOf(sf, node), message });
         if (spec.startsWith(".")) {
-          if (!resolvesRelative(files, path, spec)) add(`"${spec}" is not a file in the output`);
+          const targetPath = resolveRelative(files, path, spec);
+          if (!targetPath) {
+            add(`"${spec}" is not a file in the output`);
+          } else if (isCode(targetPath)) {
+            if (!exportsCache.has(targetPath)) exportsCache.set(targetPath, exportsOf(parseFile(files, targetPath)));
+            const target = exportsCache.get(targetPath);
+            if (!target.open) {
+              for (const f of bindingFindings(node, spec, target)) findings.push({ file: path, line: lineOf(sf, f.node), message: f.message });
+            }
+          }
         } else if (/^[@~#]\//.test(spec) || spec.startsWith("node:")) {
           add(`"${spec}" does not resolve in a standalone folder`);
         } else {
