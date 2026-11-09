@@ -1,0 +1,10 @@
+A = contract, B = contract+feedback, k = 1: 6 shared tasks, 2000 task-level bootstrap replicates, seed 0
+metric  run  point   95% CI
+pass^k  A    0.0000  [0.0000, 0.0000]
+pass^k  B    0.0000  [0.0000, 0.0000]
+pass@k  A    0.0000  [0.0000, 0.0000]
+pass@k  B    0.0000  [0.0000, 0.0000]
+diff B - A in pass^k: 0.0000, 95% CI [0.0000, 0.0000]
+one-sided 95% bounds: lower 0.0000, upper 0.0000; margin 0.05
+paired permutation p (pass^k, 2000 sign flips): 1.0000
+verdict: non_inferior

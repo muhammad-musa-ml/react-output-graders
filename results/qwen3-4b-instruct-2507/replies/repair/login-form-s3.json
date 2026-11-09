@@ -3,6 +3,6 @@
  "tokens": 1445,
  "promptTokens": 1879,
  "numCtx": 8192,
- "seconds": 28.864,
+ "seconds": 27.659,
  "done": "stop"
 }

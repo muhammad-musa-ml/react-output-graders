@@ -66,6 +66,9 @@ test("summarize counts passes per run and per seed, rule failures, and repairs",
   const md = toMarkdown(s);
   assert.match(md, /\| bare \| 1\/4 \| 25\.0% \|/);
   assert.match(md, /\| contract\+feedback \| 2\/2 \| 100\.0% \|/);
+  assert.equal(s.runs.bare.meanFailedRules, 1);
+  assert.equal(s.runs["contract+feedback"].meanFailedRules, 0);
+  assert.match(md, /Failed rules per reply, mean: bare 1\.00, /);
   assert.match(md, /Repair turn: 1 of 1 failing contract replies/);
   assert.equal(s.runs.bare.cut, 1);
   assert.match(md, /cut off at the length limit or the context window: bare 1, contract 0, contract\+feedback 0\./);

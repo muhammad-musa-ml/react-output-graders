@@ -16,7 +16,10 @@ export function summarize(trials) {
     if (t.success) s.passes += 1;
     for (const rule of t.failed_rules ?? []) r.ruleFailures[rule] = (r.ruleFailures[rule] ?? 0) + 1;
   }
-  for (const r of Object.values(runs)) r.ci = wilson(r.passes, r.n);
+  for (const r of Object.values(runs)) {
+    r.ci = wilson(r.passes, r.n);
+    r.meanFailedRules = Object.values(r.ruleFailures).reduce((sum, n) => sum + n, 0) / r.n;
+  }
   const repairs = trials.filter((t) => t.run === "contract+feedback" && t.repaired);
   return {
     runs,
@@ -40,6 +43,7 @@ export function toMarkdown(summary) {
   const rules = [...new Set(names.flatMap((n) => Object.keys(summary.runs[n].ruleFailures)))].sort();
   lines.push("", "Trials that failed each rule:", "", `| rule | ${names.join(" | ")} |`, `| --- | ${names.map(() => "---").join(" | ")} |`);
   for (const rule of rules) lines.push(`| ${rule} | ${names.map((n) => summary.runs[n].ruleFailures[rule] ?? 0).join(" | ")} |`);
+  lines.push("", `Failed rules per reply, mean: ${names.map((n) => `${n} ${summary.runs[n].meanFailedRules.toFixed(2)}`).join(", ")}.`);
   lines.push("", `Repair turn: ${summary.repair.fixed} of ${summary.repair.attempted} failing contract replies passed every rule after one round of the grader's findings.`);
   lines.push("", `Replies cut off at the length limit or the context window: ${names.map((n) => `${n} ${summary.runs[n].cut}`).join(", ")}.`);
   return lines.join("\n");
