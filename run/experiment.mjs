@@ -33,10 +33,10 @@ if (tasks.length === 0) {
 
 mkdirSync(join(out, "replies"), { recursive: true });
 
-async function reply(name, seed, messages) {
+async function reply(name, seed, messages, numCtx = 4096) {
   const file = join(out, "replies", `${name}.json`);
   if (existsSync(file)) return JSON.parse(readFileSync(file, "utf8"));
-  const got = await chat({ model, messages, seed });
+  const got = await chat({ model, messages, seed, numCtx });
   mkdirSync(dirname(file), { recursive: true });
   writeFileSync(file, JSON.stringify(got, null, 1));
   console.log(`generated ${name}: ${got.tokens} tokens, ${got.seconds.toFixed(0)} s, ${got.done}`);
@@ -46,7 +46,7 @@ async function reply(name, seed, messages) {
 // A reply that stopped at the length limit, or whose prompt and reply together
 // filled the context window, is marked so it is not read as a model failure.
 function cut(got) {
-  return got.done === "length" || (got.promptTokens ?? 0) + got.tokens >= 4096;
+  return got.done === "length" || (got.promptTokens ?? 0) + got.tokens >= (got.numCtx ?? 4096);
 }
 
 function record(run, task, seed, result, extra, got) {
@@ -86,7 +86,7 @@ for (const task of tasks) {
       { role: "assistant", content: first.text },
       { role: "user", content: feedbackPrompt(firstResult) },
     ];
-    const second = await reply(`repair/${task.id}-s${seed}`, seed, repairMessages);
+    const second = await reply(`repair/${task.id}-s${seed}`, seed, repairMessages, 8192);
     const secondFiles = extractFiles(second.text);
     trials.push(record("contract+feedback", task, seed, grade(secondFiles.files, task.spec), { repaired: true, unnamed_blocks: secondFiles.unnamed }, second));
   }

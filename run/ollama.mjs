@@ -28,20 +28,22 @@ function post(path, payload) {
 }
 
 // One chat turn. Returns the reply text, the tokens generated and the seconds taken.
-export async function chat({ model, messages, seed, temperature = 0.7, numPredict = 2400 }) {
+export async function chat({ model, messages, seed, temperature = 0.7, numPredict = 3500, numCtx = 4096 }) {
   const started = Date.now();
   const data = await post("/api/chat", {
     model,
     messages,
     stream: false,
-    // 4096 matches what other clients of a shared server usually load; a
-    // different num_ctx makes Ollama reload the model for each request.
-    options: { temperature, top_p: 0.9, seed, num_ctx: 4096, num_predict: numPredict },
+    // 4096 is what other clients of a shared server usually load, and a
+    // different num_ctx makes Ollama reload the model. A repair turn sends the
+    // first prompt and reply back, so it asks for more.
+    options: { temperature, top_p: 0.9, seed, num_ctx: numCtx, num_predict: numPredict },
   });
   return {
     text: data.message?.content ?? "",
     tokens: data.eval_count ?? 0,
     promptTokens: data.prompt_eval_count ?? 0,
+    numCtx,
     seconds: (Date.now() - started) / 1000,
     done: data.done_reason ?? "",
   };

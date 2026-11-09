@@ -1,5 +1,5 @@
-// node run/report.mjs <dir with trials.jsonl>
-import { readFileSync } from "node:fs";
+// node run/report.mjs <dir with trials.jsonl>   prints the report and writes <dir>/report.md
+import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { summarize, toMarkdown } from "./summary.mjs";
 
@@ -16,4 +16,6 @@ if (trials.length === 0) {
   console.error("trials.jsonl is empty; nothing to report");
   process.exit(2);
 }
-console.log(toMarkdown(summarize(trials)));
+const markdown = toMarkdown(summarize(trials));
+writeFileSync(join(dir, "report.md"), markdown + "\n");
+console.log(markdown);
