@@ -21,7 +21,8 @@ test("required-files names each missing file", () => {
   for (const name of REQUIRED_FILES) {
     const files = good();
     files.delete(name);
-    assert.deepEqual(failedIds(files), ["required-files"], name);
+    // index.tsx imports App and index.css, so deleting those also breaks an import.
+    assert.ok(failedIds(files).includes("required-files"), name);
     assert.deepEqual(
       findingsFor(files, "required-files").map((f) => f.file),
       [name],

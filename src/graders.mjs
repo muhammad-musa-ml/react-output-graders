@@ -1,6 +1,7 @@
 import { normalizePaths } from "./files.mjs";
 import { isCode, syntaxErrors } from "./parse.mjs";
 import { CODE_RULES } from "./rules/code.mjs";
+import { IMPORT_RULES } from "./rules/imports.mjs";
 
 export const REQUIRED_FILES = ["App.tsx", "index.tsx", "index.css", "tailwind.config.js"];
 
@@ -29,6 +30,7 @@ export const RULES = [
     },
   },
   ...CODE_RULES,
+  ...IMPORT_RULES,
 ];
 
 export function grade(inputFiles, spec = null) {
