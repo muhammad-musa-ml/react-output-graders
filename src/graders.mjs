@@ -1,12 +1,14 @@
 import { normalizePaths } from "./files.mjs";
 import { isCode, syntaxErrors } from "./parse.mjs";
 import { CODE_RULES } from "./rules/code.mjs";
+import { CSS_RULES } from "./rules/css.mjs";
 import { IMPORT_RULES } from "./rules/imports.mjs";
 
 export const REQUIRED_FILES = ["App.tsx", "index.tsx", "index.css", "tailwind.config.js"];
 
-// Each rule: { id, needsSpec, check(files, spec) -> [{ file, line, message }] }.
-// A rule that needs a spec and gets none is reported as skipped, never as passed.
+// Each rule: { id, needsSpec, specHasInput(spec), check(files, spec) -> [{ file, line, message }] }.
+// A rule that needs a spec and gets none, or gets a spec with nothing to check,
+// is reported as skipped, never as passed.
 export const RULES = [
   {
     id: "required-files",
@@ -31,12 +33,13 @@ export const RULES = [
   },
   ...CODE_RULES,
   ...IMPORT_RULES,
+  ...CSS_RULES,
 ];
 
 export function grade(inputFiles, spec = null) {
   const files = normalizePaths(inputFiles);
   const rules = RULES.map((rule) => {
-    if (rule.needsSpec && !spec) return { id: rule.id, pass: null, skipped: true, findings: [] };
+    if (rule.needsSpec && !rule.specHasInput(spec)) return { id: rule.id, pass: null, skipped: true, findings: [] };
     const findings = rule.check(files, spec);
     return { id: rule.id, pass: findings.length === 0, skipped: false, findings };
   });
