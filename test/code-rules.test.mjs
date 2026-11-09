@@ -53,6 +53,18 @@ test("one-component-per-file counts arrow components and wrapped components", ()
   assert.deepEqual(failedIds(wrapped), ["one-component-per-file"]);
 });
 
+test("one-component-per-file counts a component nested in another, a class, and an as-wrapped arrow", () => {
+  const nested = variant(CARD, (t) => t.replace("  const plan = plans[billing];", "  const Feature = ({ label }: { label: string }) => <li>{label}</li>;\n  void Feature;\n  const plan = plans[billing];"));
+  const klass = variant(CARD, (t) => t + "\nexport class Legacy extends React.Component {\n  render() {\n    return <div />;\n  }\n}\n");
+  const asWrapped = variant(CARD, (t) => t + "\nexport const Badge = (() => <span>New</span>) as React.FC;\n");
+  for (const files of [nested, klass, asWrapped]) assert.deepEqual(failedIds(files), ["one-component-per-file"]);
+});
+
+test("one-component-per-file does not count a capitalised value that merely holds JSX or a hook result", () => {
+  const files = variant(CARD, (t) => t.replace("  const plan = plans[billing];", "  const Hero = <h1>Hi</h1>;\n  const Memoised = useMemo(() => <b>x</b>, []);\n  void Hero;\n  void Memoised;\n  const plan = plans[billing];").replace("{ useState }", "{ useState, useMemo }"));
+  assert.deepEqual(failedIds(files), []);
+});
+
 test("one-component-per-file ignores helpers that return no JSX and types", () => {
   const files = variant(CARD, (t) => t + "\nexport function Formatter(n: number) {\n  return String(n);\n}\nexport type Props = { a: string };\nconst Style = { color: 'red' };\n");
   assert.deepEqual(failedIds(files), []);
@@ -69,6 +81,11 @@ test("react-in-scope fails React.memo when React is not imported, and passes whe
   const withReact = variant(CARD, (t) => t + "\nexport const Memoized = React.memo(PricingCard);\n");
   assert.deepEqual(failedIds(without), ["react-in-scope"]);
   assert.deepEqual(failedIds(withReact), []);
+});
+
+test("react-in-scope accepts hooks taken from React by destructuring", () => {
+  const files = variant(CARD, (t) => t.replace("import React, { useState } from 'react';", "import React from 'react';\nconst { useState } = React;"));
+  assert.deepEqual(failedIds(files), []);
 });
 
 test("react-in-scope accepts a hook imported under a namespace and a type-only React reference", () => {
@@ -93,6 +110,23 @@ test("runtime-stripped fails fetch, axios, an env read, import.meta.env and a Ne
   assert.ok(failedIds(next).includes("runtime-stripped"));
 });
 
+test("runtime-stripped also fails globalThis.fetch, XMLHttpRequest, an axios import and an inline use server", () => {
+  const forms = [
+    (t) => t.replace("const plan = plans[billing];", "const plan = plans[billing];\n  globalThis.fetch('/api/plans');"),
+    (t) => t.replace("const plan = plans[billing];", "const plan = plans[billing];\n  const x = new XMLHttpRequest();\n  void x;"),
+    (t) => t + "\nexport async function save() {\n  'use server';\n}\n",
+    (t) => t + "\nexport const save = async () => {\n  'use server';\n};\n",
+  ];
+  for (const edit of forms) assert.deepEqual(failedIds(variant(CARD, edit)), ["runtime-stripped"]);
+  const axiosImport = variant(CARD, (t) => t.replace("import { plans }", "import axios from 'axios';\nvoid axios;\nimport { plans }"));
+  assert.ok(findingsFor(axiosImport, "runtime-stripped").some((f) => /axios import/.test(f.message)));
+});
+
+test("runtime-stripped ignores other window calls and a use server string that is not a directive", () => {
+  const files = variant(CARD, (t) => t.replace("const plan = plans[billing];", "const plan = plans[billing];\n  window.scrollTo(0, 0);\n  const label = 'use server';\n  void label;"));
+  assert.deepEqual(failedIds(files), []);
+});
+
 test("runtime-stripped ignores a method named fetch and a local env object", () => {
   const files = variant(CARD, (t) => t.replace("const plan = plans[billing];", "const store = { fetch: () => 1, env: 2 };\n  const plan = plans[billing];\n  void store.fetch();\n  void store.env;"));
   assert.deepEqual(failedIds(files), []);
@@ -103,6 +137,13 @@ test("absolute-image-urls fails an app-relative and a relative src", () => {
     const files = variant(CARD, (t) => t.replace("https://example.com/assets/logo.png", bad));
     assert.deepEqual(failedIds(files), ["absolute-image-urls"], bad);
   }
+});
+
+test("absolute-image-urls fails a string in braces and an img that is not self-closing", () => {
+  const braces = variant(CARD, (t) => t.replace('src="https://example.com/assets/logo.png"', "src={'/images/logo.png'}"));
+  assert.deepEqual(failedIds(braces), ["absolute-image-urls"]);
+  const open = variant(CARD, (t) => t.replace('<h2 className="mt-4', '<img src="/x.png"></img>\n      <h2 className="mt-4'));
+  assert.deepEqual(failedIds(open), ["absolute-image-urls"]);
 });
 
 test("absolute-image-urls accepts https, protocol-relative, data and expression sources", () => {

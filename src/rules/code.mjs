@@ -54,25 +54,36 @@ const noAny = {
 
 const isPascal = (name) => /^[A-Z][A-Za-z0-9]*$/.test(name);
 
-function topLevelComponents(sf) {
+const unwrap = (node) => {
+  let n = node;
+  while (ts.isParenthesizedExpression(n) || ts.isAsExpression(n) || ts.isSatisfiesExpression(n) || ts.isNonNullExpression(n)) n = n.expression;
+  return n;
+};
+
+// memo(() => ...) and forwardRef(...) wrap a component; useMemo(() => <div />) does not.
+function isComponentWrapper(init) {
+  if (!ts.isCallExpression(init)) return false;
+  const callee = init.expression;
+  const name = ts.isIdentifier(callee) ? callee.text : ts.isPropertyAccessExpression(callee) ? callee.name.text : "";
+  return (name === "memo" || name === "forwardRef") && init.arguments.some((a) => ts.isArrowFunction(a) || ts.isFunctionExpression(a));
+}
+
+// A component is a capitalised function, arrow, class or memo/forwardRef wrapper that returns JSX,
+// declared anywhere in the file: one nested in another component counts too.
+function findComponents(sf) {
   const found = [];
-  for (const stmt of sf.statements) {
-    if (ts.isFunctionDeclaration(stmt) && stmt.name && isPascal(stmt.name.text) && stmt.body && containsJsx(stmt.body)) {
-      found.push({ name: stmt.name.text, node: stmt });
-    } else if (ts.isClassDeclaration(stmt) && stmt.name && isPascal(stmt.name.text) && containsJsx(stmt)) {
-      found.push({ name: stmt.name.text, node: stmt });
-    } else if (ts.isVariableStatement(stmt)) {
-      for (const decl of stmt.declarationList.declarations) {
-        if (!ts.isIdentifier(decl.name) || !isPascal(decl.name.text) || !decl.initializer) continue;
-        const init = decl.initializer;
-        const callsWithFunction =
-          ts.isCallExpression(init) && init.arguments.some((a) => ts.isArrowFunction(a) || ts.isFunctionExpression(a));
-        if ((ts.isArrowFunction(init) || ts.isFunctionExpression(init) || callsWithFunction) && containsJsx(init)) {
-          found.push({ name: decl.name.text, node: decl });
-        }
+  walk(sf, (n) => {
+    if (ts.isFunctionDeclaration(n) && n.name && isPascal(n.name.text) && n.body && containsJsx(n.body)) {
+      found.push({ name: n.name.text, node: n });
+    } else if (ts.isClassDeclaration(n) && n.name && isPascal(n.name.text) && containsJsx(n)) {
+      found.push({ name: n.name.text, node: n });
+    } else if (ts.isVariableDeclaration(n) && ts.isIdentifier(n.name) && isPascal(n.name.text) && n.initializer) {
+      const init = unwrap(n.initializer);
+      if ((ts.isArrowFunction(init) || ts.isFunctionExpression(init) || isComponentWrapper(init)) && containsJsx(init)) {
+        found.push({ name: n.name.text, node: n });
       }
     }
-  }
+  });
   return found;
 }
 
@@ -83,7 +94,7 @@ const oneComponentPerFile = {
     const findings = [];
     for (const path of tsFiles(files)) {
       const sf = parseFile(files, path);
-      const components = topLevelComponents(sf);
+      const components = findComponents(sf);
       if (components.length > 1) {
         findings.push({
           file: path,
@@ -113,6 +124,11 @@ const HOOKS = new Set([
   "useSyncExternalStore",
 ]);
 
+function bindingNames(name, out) {
+  if (ts.isIdentifier(name)) out.add(name.text);
+  else for (const el of name.elements) if (ts.isBindingElement(el)) bindingNames(el.name, out);
+}
+
 function moduleBindings(sf) {
   const names = new Set();
   for (const stmt of sf.statements) {
@@ -125,7 +141,7 @@ function moduleBindings(sf) {
     } else if ((ts.isFunctionDeclaration(stmt) || ts.isClassDeclaration(stmt)) && stmt.name) {
       names.add(stmt.name.text);
     } else if (ts.isVariableStatement(stmt)) {
-      for (const d of stmt.declarationList.declarations) if (ts.isIdentifier(d.name)) names.add(d.name.text);
+      for (const d of stmt.declarationList.declarations) bindingNames(d.name, names);
     }
   }
   return names;
@@ -167,11 +183,11 @@ const runtimeStripped = {
     for (const path of uiFiles(files)) {
       const sf = parseFile(files, path);
       const add = (node, message) => findings.push({ file: path, line: lineOf(sf, node), message });
-      const first = sf.statements[0];
-      if (first && ts.isExpressionStatement(first) && ts.isStringLiteral(first.expression) && first.expression.text === "use server") {
-        add(first, "'use server' directive");
-      }
+      const isUseServer = (stmt) => stmt && ts.isExpressionStatement(stmt) && ts.isStringLiteral(stmt.expression) && stmt.expression.text === "use server";
+      if (isUseServer(sf.statements[0])) add(sf.statements[0], "'use server' directive");
       walk(sf, (n) => {
+        const fn = ts.isFunctionDeclaration(n) || ts.isFunctionExpression(n) || ts.isArrowFunction(n) || ts.isMethodDeclaration(n);
+        if (fn && n.body && ts.isBlock(n.body) && isUseServer(n.body.statements[0])) add(n.body.statements[0], "'use server' directive in a function");
         if (ts.isCallExpression(n)) {
           const callee = n.expression;
           if (ts.isIdentifier(callee) && (callee.text === "fetch" || callee.text === "axios")) add(n, `${callee.text}() call`);

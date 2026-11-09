@@ -7,9 +7,10 @@ const ORDER = ["bare", "contract", "contract+feedback"];
 export function summarize(trials) {
   const runs = {};
   for (const t of trials) {
-    const r = (runs[t.run] ??= { n: 0, passes: 0, perSeed: {}, ruleFailures: {} });
+    const r = (runs[t.run] ??= { n: 0, passes: 0, cut: 0, perSeed: {}, ruleFailures: {} });
     r.n += 1;
     if (t.success) r.passes += 1;
+    if (t.cut) r.cut += 1;
     const s = (r.perSeed[t.trial] ??= { passes: 0, n: 0 });
     s.n += 1;
     if (t.success) s.passes += 1;
@@ -40,5 +41,6 @@ export function toMarkdown(summary) {
   lines.push("", "Trials that failed each rule:", "", `| rule | ${names.join(" | ")} |`, `| --- | ${names.map(() => "---").join(" | ")} |`);
   for (const rule of rules) lines.push(`| ${rule} | ${names.map((n) => summary.runs[n].ruleFailures[rule] ?? 0).join(" | ")} |`);
   lines.push("", `Repair turn: ${summary.repair.fixed} of ${summary.repair.attempted} failing contract replies passed every rule after one round of the grader's findings.`);
+  lines.push("", `Replies cut off at the length limit or the context window: ${names.map((n) => `${n} ${summary.runs[n].cut}`).join(", ")}.`);
   return lines.join("\n");
 }

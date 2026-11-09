@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { loadDir } from "./files.mjs";
 import { grade } from "./graders.mjs";
 
@@ -10,6 +10,11 @@ const dir = args.find((a, i) => !a.startsWith("--") && args[i - 1] !== "--spec")
 
 if (!dir) {
   console.error("usage: node src/cli.mjs <folder> [--spec spec.json] [--json]");
+  process.exit(2);
+}
+
+if (!existsSync(dir) || !statSync(dir).isDirectory()) {
+  console.error(`${dir} is not a folder; nothing was graded`);
   process.exit(2);
 }
 

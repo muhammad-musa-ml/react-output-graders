@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { LUCIDE_NAMES } from "../src/rules/imports.mjs";
+import { LUCIDE_NAMES, LUCIDE_VERSION } from "../src/rules/imports.mjs";
 import { failedIds, findingsFor, good, variant } from "./helpers.mjs";
 
 const CARD = "PricingCard.tsx";
@@ -22,15 +22,29 @@ test("imports-resolve fails a path alias and a node: module", () => {
 });
 
 test("imports-resolve fails a package outside the contract unless a package.json declares it", () => {
-  const files = variant(CARD, withImport("import { motion } from 'framer-motion';"));
+  const files = variant(CARD, withImport("import { debounce } from 'lodash';"));
   assert.deepEqual(failedIds(files), ["imports-resolve"]);
-  assert.match(findingsFor(files, "imports-resolve")[0].message, /framer-motion/);
-  files.set("package.json", JSON.stringify({ dependencies: { "framer-motion": "^11.0.0" } }));
-  assert.deepEqual(failedIds(files), []);
+  assert.match(findingsFor(files, "imports-resolve")[0].message, /lodash/);
+  for (const key of ["dependencies", "devDependencies", "peerDependencies"]) {
+    files.set("package.json", JSON.stringify({ [key]: { lodash: "^4.17.0" } }));
+    assert.deepEqual(failedIds(files), [], key);
+  }
+});
+
+test("imports-resolve allows framer-motion, which Magic Patterns code uses", () => {
+  assert.deepEqual(failedIds(variant(CARD, withImport("import { motion } from 'framer-motion';"))), []);
+});
+
+test("imports-resolve reads require() and export-from, and skips tailwind.config.js", () => {
+  assert.deepEqual(failedIds(variant(CARD, withImport("const m = require('./Missing');"))), ["imports-resolve"]);
+  assert.deepEqual(failedIds(variant(CARD, (t) => t + "\nexport * from './Missing';\n")), ["imports-resolve"]);
+  const config = good();
+  config.set("tailwind.config.js", config.get("tailwind.config.js").replace("plugins: []", "plugins: [require('@tailwindcss/forms')]"));
+  assert.deepEqual(failedIds(config), []);
 });
 
 test("imports-resolve treats a package.json that does not parse as declaring nothing", () => {
-  const files = variant(CARD, withImport("import { motion } from 'framer-motion';"));
+  const files = variant(CARD, withImport("import { debounce } from 'lodash';"));
   files.set("package.json", "{ not json");
   assert.deepEqual(failedIds(files), ["imports-resolve"]);
 });
@@ -72,8 +86,13 @@ test("icon-names-exist fails a made-up icon and lists similar real ones", () => 
 test("icon-names-exist fails a default import and a made-up name on a namespace import", () => {
   const def = variant(CARD, withImport("import Lucide from 'lucide-react';"));
   assert.deepEqual(failedIds(def), ["icon-names-exist"]);
-  const ns = variant(CARD, (t) => t.replace("import { CheckIcon } from 'lucide-react';", "import * as Icons from 'lucide-react';").replace("<CheckIcon", "<Icons.CheckmarkNope").replace(" className=\"h-4 w-4 text-accent\" />", " className=\"h-4 w-4 text-accent\" />"));
-  assert.ok(failedIds(ns).includes("icon-names-exist"));
+  const ns = variant(CARD, (t) => t.replace("import { CheckIcon } from 'lucide-react';", "import * as Icons from 'lucide-react';").replace("<CheckIcon", "<Icons.CheckmarkNope"));
+  assert.deepEqual(failedIds(ns), ["icon-names-exist"]);
+  assert.equal(findingsFor(ns, "icon-names-exist").length, 1, "a JSX tag is reported once");
+  const outsideJsx = variant(CARD, (t) => t.replace("import { CheckIcon } from 'lucide-react';", "import * as Icons from 'lucide-react';\nconst Tick = Icons.CheckmarkNope;\nvoid Tick;").replace("<CheckIcon", "<Icons.Check"));
+  assert.deepEqual(failedIds(outsideJsx), ["icon-names-exist"]);
+  const real = variant(CARD, (t) => t.replace("import { CheckIcon } from 'lucide-react';", "import * as Icons from 'lucide-react';").replace("<CheckIcon", "<Icons.Check"));
+  assert.deepEqual(failedIds(real), []);
 });
 
 test("icon-names-exist accepts renamed imports, Icon and Lucide aliases, and the types", () => {
@@ -82,6 +101,7 @@ test("icon-names-exist accepts renamed imports, Icon and Lucide aliases, and the
 });
 
 test("the name list carries the version it came from and the names an output uses", () => {
+  assert.equal(LUCIDE_VERSION, "1.70.0");
   assert.ok(LUCIDE_NAMES.size > 1000);
   for (const name of ["Check", "CheckIcon", "LucideCheck", "LucideIcon", "LucideProps"]) assert.ok(LUCIDE_NAMES.has(name), name);
   assert.equal(LUCIDE_NAMES.has("CheckmarkIcon"), false);

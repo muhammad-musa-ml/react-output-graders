@@ -6,14 +6,17 @@ const namesText = readFileSync(new URL("../../data/lucide-react-names.txt", impo
 export const LUCIDE_NAMES = new Set(namesText.split("\n").filter((l) => l && !l.startsWith("#")));
 export const LUCIDE_VERSION = (namesText.match(/lucide-react (\S+)/) ?? [])[1] ?? "unknown";
 
-// The packages the recreate-as-react contract names, plus react-dom because
-// its own index.tsx imports react-dom/client. Anything else has to be
-// declared in a package.json the output carries.
+// The packages the recreate-as-react contract names, react-dom because its own
+// index.tsx imports react-dom/client, and framer-motion because the
+// integrate-magic-patterns-design skill lists it among the libraries Magic
+// Patterns code uses. Anything else has to be declared in a package.json the
+// output carries.
 export const ALLOWED_PACKAGES = new Set([
   "react",
   "react-dom",
   "lucide-react",
   "react-router-dom",
+  "framer-motion",
   "sonner",
   "recharts",
   "@xyflow/react",
@@ -131,11 +134,9 @@ const iconNamesExist = {
       }
       if (namespaces.size > 0) {
         walk(sf, (n) => {
+          // A JSX tag <Icons.X /> has a property access for its tag name, so this one arm covers it.
           if (ts.isPropertyAccessExpression(n) && ts.isIdentifier(n.expression) && namespaces.has(n.expression.text)) {
             if (!LUCIDE_NAMES.has(n.name.text)) unknown(n, n.name.text);
-          }
-          if (ts.isJsxOpeningLikeElement(n) && ts.isPropertyAccessExpression(n.tagName) && ts.isIdentifier(n.tagName.expression)) {
-            if (namespaces.has(n.tagName.expression.text) && !LUCIDE_NAMES.has(n.tagName.name.text)) unknown(n, n.tagName.name.text);
           }
         });
       }

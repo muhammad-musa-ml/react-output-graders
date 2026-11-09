@@ -14,8 +14,12 @@ function cssImports(css) {
   return found;
 }
 
+// A remote import is a font import only when its address says so; a stylesheet
+// from a CDN (leaflet.css) is one of the "other" imports.
+const FONT_URL = /fonts\.(googleapis|gstatic|bunny)|typekit|fontawesome|[?&]family=|[.](woff2?|ttf|otf)([?]|$)/i;
+
 const kindOf = (spec) => {
-  if (/^(https?:)?\/\//i.test(spec)) return "font";
+  if (/^(https?:)?\/\//i.test(spec)) return FONT_URL.test(spec) ? "font" : "other";
   if (spec === "tailwindcss/base") return "base";
   if (spec === "tailwindcss/components") return "components";
   if (spec === "tailwindcss/utilities") return "utilities";
@@ -112,7 +116,11 @@ const tokenCoverage = {
     }
     const css = (files.get("index.css") ?? "").toLowerCase().replace(/\+/g, " ");
     for (const font of spec.fonts ?? []) {
-      if (!css.includes(font.toLowerCase())) findings.push({ file: "index.css", line: 0, message: `font ${font} from the spec is not in index.css` });
+      const escaped = font.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      // The name has to stand alone: "Inter" must not be found inside "pointer".
+      if (!new RegExp(`(^|[^a-z0-9])${escaped}([^a-z0-9]|$)`).test(css)) {
+        findings.push({ file: "index.css", line: 0, message: `font ${font} from the spec is not in index.css` });
+      }
     }
     return findings;
   },

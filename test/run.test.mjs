@@ -51,7 +51,7 @@ test("summarize counts passes per run and per seed, rule failures, and repairs",
     trial("bare", "a", 1, false, ["named-exports"]),
     trial("bare", "b", 1, false, ["named-exports", "no-any"]),
     trial("bare", "a", 2, true),
-    trial("bare", "b", 2, false, ["no-any"]),
+    { ...trial("bare", "b", 2, false, ["no-any"]), cut: true },
     trial("contract", "a", 1, true),
     trial("contract", "b", 1, false, ["imports-resolve"]),
     { ...trial("contract+feedback", "a", 1, true), repaired: false },
@@ -67,4 +67,6 @@ test("summarize counts passes per run and per seed, rule failures, and repairs",
   assert.match(md, /\| bare \| 1\/4 \| 25\.0% \|/);
   assert.match(md, /\| contract\+feedback \| 2\/2 \| 100\.0% \|/);
   assert.match(md, /Repair turn: 1 of 1 failing contract replies/);
+  assert.equal(s.runs.bare.cut, 1);
+  assert.match(md, /cut off at the length limit or the context window: bare 1, contract 0, contract\+feedback 0\./);
 });

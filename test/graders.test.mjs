@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
-import { extractFiles } from "../src/files.mjs";
+import { extractFiles, loadDir } from "../src/files.mjs";
 import { grade, REQUIRED_FILES } from "../src/graders.mjs";
 import { failedIds, findingsFor, good, spec, variant } from "./helpers.mjs";
 
@@ -33,6 +36,31 @@ test("required-files names each missing file", () => {
 test("a shared wrapper folder does not hide the files", () => {
   const wrapped = new Map([...good()].map(([p, t]) => [`PricingCard/${p}`, t]));
   assert.deepEqual(failedIds(wrapped), []);
+});
+
+test("a leading ./ on a path does not hide a file", () => {
+  const dotted = new Map([...good()].map(([p, t]) => [`./${p}`, t]));
+  assert.deepEqual(failedIds(dotted), []);
+  const both = new Map([...good()].map(([p, t]) => [`./PricingCard/${p}`, t]));
+  assert.deepEqual(failedIds(both), []);
+});
+
+test("loadDir reads source, style and json files, and skips node_modules and other files", () => {
+  const dir = mkdtempSync(join(tmpdir(), "rog-load-"));
+  try {
+    mkdirSync(join(dir, "node_modules", "dep"), { recursive: true });
+    mkdirSync(join(dir, "components"));
+    writeFileSync(join(dir, "App.tsx"), "x");
+    writeFileSync(join(dir, "components", "Row.tsx"), "x");
+    writeFileSync(join(dir, "index.css"), "x");
+    writeFileSync(join(dir, "package.json"), "{}");
+    writeFileSync(join(dir, "logo.png"), "x");
+    writeFileSync(join(dir, "notes.md"), "x");
+    writeFileSync(join(dir, "node_modules", "dep", "index.js"), "x");
+    assert.deepEqual([...loadDir(dir).keys()].sort(), ["App.tsx", "components/Row.tsx", "index.css", "package.json"]);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("syntax reports the line of the error and nothing else fails", () => {

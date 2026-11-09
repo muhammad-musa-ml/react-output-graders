@@ -59,6 +59,19 @@ test("css-import-order reads a font url with semicolons, an unquoted url and a p
   }
 });
 
+test("css-import-order treats a stylesheet from a CDN as an other import, not a font import", () => {
+  const cdn = "@import url('https://unpkg.com/leaflet@1.9.4/dist/leaflet.css');\n";
+  const after = variant(CSS, (t) => t.replace(UTILITIES, UTILITIES + cdn));
+  assert.deepEqual(failedIds(after), []);
+  const before = variant(CSS, (t) => t.replace(COMPONENTS, cdn + COMPONENTS));
+  assert.deepEqual(failedIds(before), ["css-import-order"]);
+});
+
+test("css-vars-defined says nothing when the css itself imports a package stylesheet", () => {
+  const files = variant(CSS, (t) => t.replace(UTILITIES, UTILITIES + "@import '@radix-ui/themes/styles.css';\n") + "\n.a { color: var(--accent-9); }\n");
+  assert.deepEqual(failedIds(files), []);
+});
+
 test("css-vars-defined fails a var that nothing defines, and names the line", () => {
   const files = variant(CSS, (t) => t + "\n.card {\n  color: var(--missing);\n}\n");
   assert.deepEqual(failedIds(files), ["css-vars-defined"]);
@@ -98,6 +111,18 @@ test("token-coverage matches a color written as short hex, upper case or rgb()",
     const failed = grade(files, wanted).rules.filter((r) => r.pass === false).map((r) => r.id);
     assert.ok(!failed.includes("token-coverage"), written);
   }
+});
+
+test("token-coverage does not find the font Inter inside the word pointer", () => {
+  const files = variant(CSS, (t) => t.replaceAll("Inter", "Roboto") + "\nbutton {\n  cursor: pointer;\n}\n");
+  assert.deepEqual(failedIds(files), ["token-coverage"]);
+  assert.match(findingsFor(files, "token-coverage")[0].message, /font Inter/);
+});
+
+test("token-coverage reads an 8-digit hex color with alpha", () => {
+  const files = good();
+  for (const path of ["index.css", "tailwind.config.js"]) files.set(path, files.get(path).replaceAll("#3e63dd", "#3e63ddcc"));
+  assert.deepEqual(failedIds(files), []);
 });
 
 test("token-coverage finds a font named with a plus sign in a Google Fonts url", () => {

@@ -47,6 +47,12 @@ test("the cli exits 2 on a folder with no source files and never prints PASS", (
   }
 });
 
+test("the cli exits 2 for a folder that does not exist, not 1", () => {
+  const r = run(join(root, "no-such-folder"));
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /not a folder/);
+});
+
 test("the cli exits 2 with no folder argument", () => {
   assert.equal(run().status, 2);
 });

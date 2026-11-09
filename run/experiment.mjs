@@ -43,7 +43,13 @@ async function reply(name, seed, messages) {
   return got;
 }
 
-function record(run, task, seed, result, extra) {
+// A reply that stopped at the length limit, or whose prompt and reply together
+// filled the context window, is marked so it is not read as a model failure.
+function cut(got) {
+  return got.done === "length" || (got.promptTokens ?? 0) + got.tokens >= 4096;
+}
+
+function record(run, task, seed, result, extra, got) {
   return {
     run,
     task: task.id,
@@ -51,6 +57,8 @@ function record(run, task, seed, result, extra) {
     success: result.pass,
     failed_rules: result.rules.filter((r) => r.pass === false).map((r) => r.id),
     files: result.fileCount,
+    tokens: got.tokens,
+    cut: cut(got),
     ...extra,
   };
 }
@@ -61,16 +69,16 @@ for (const task of tasks) {
     const bareMessages = [{ role: "user", content: firstPrompt(task, "bare") }];
     const bare = await reply(`bare/${task.id}-s${seed}`, seed, bareMessages);
     const bareFiles = extractFiles(bare.text);
-    trials.push(record("bare", task, seed, grade(bareFiles.files, task.spec), { unnamed_blocks: bareFiles.unnamed, tokens: bare.tokens }));
+    trials.push(record("bare", task, seed, grade(bareFiles.files, task.spec), { unnamed_blocks: bareFiles.unnamed }, bare));
 
     const contractMessages = [{ role: "user", content: firstPrompt(task, "contract") }];
     const first = await reply(`contract/${task.id}-s${seed}`, seed, contractMessages);
     const firstFiles = extractFiles(first.text);
     const firstResult = grade(firstFiles.files, task.spec);
-    trials.push(record("contract", task, seed, firstResult, { unnamed_blocks: firstFiles.unnamed, tokens: first.tokens }));
+    trials.push(record("contract", task, seed, firstResult, { unnamed_blocks: firstFiles.unnamed }, first));
 
     if (firstResult.pass) {
-      trials.push(record("contract+feedback", task, seed, firstResult, { repaired: false, tokens: first.tokens }));
+      trials.push(record("contract+feedback", task, seed, firstResult, { repaired: false }, first));
       continue;
     }
     const repairMessages = [
@@ -80,7 +88,7 @@ for (const task of tasks) {
     ];
     const second = await reply(`repair/${task.id}-s${seed}`, seed, repairMessages);
     const secondFiles = extractFiles(second.text);
-    trials.push(record("contract+feedback", task, seed, grade(secondFiles.files, task.spec), { repaired: true, unnamed_blocks: secondFiles.unnamed, tokens: second.tokens }));
+    trials.push(record("contract+feedback", task, seed, grade(secondFiles.files, task.spec), { repaired: true, unnamed_blocks: secondFiles.unnamed }, second));
   }
 }
 
